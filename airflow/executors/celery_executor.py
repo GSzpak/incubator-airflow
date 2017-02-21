@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from builtins import object
+import json
 import logging
+import os
 import subprocess
 import time
 
@@ -50,6 +52,11 @@ class CeleryConfig(object):
 app = Celery(
     configuration.get('celery', 'CELERY_APP_NAME'),
     config_source=CeleryConfig)
+
+if 'AIRFLOW__CELERY_CONFIG' in os.environ:
+    with open(os.environ['AIRFLOW__CELERY_CONFIG'], 'r') as celery_config_file:
+        config_dict = json.load(celery_config_file)
+    app.conf.update(**config_dict)
 
 
 @app.task
