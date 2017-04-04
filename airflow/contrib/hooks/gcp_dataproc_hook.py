@@ -59,9 +59,9 @@ class _DataProcJob:
             time.sleep(5)
 
     def raise_error(self, message=None):
-        if 'ERROR' == self.job['status']['state']:
+        if self.job['status']['state'] == 'CANCELLED' or self.job['status']['state'] == 'ERROR':
             if message is None:
-                message = "Google DataProc job has error"
+                message = "Google DataProc job has error or was cancelled"
             raise Exception(message + ": " + str(self.job['status']['details']))
 
     def get(self):
