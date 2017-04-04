@@ -281,21 +281,8 @@ class DagBag(BaseDagBag, LoggingMixin):
                     if mod_name == '__init__':
                         self.logger.warning("Found __init__.{0} at root of {1}".
                                             format(ext, filepath))
-
-                    if safe_mode:
-                        with zip_file.open(mod.filename) as zf:
-                            self.logger.debug("Reading {} from {}".
-                                              format(mod.filename, filepath))
-                            content = zf.read()
-                            if not all([s in content for s in (b'DAG', b'airflow')]):
-                                self.file_last_changed[filepath] = (
-                                    file_last_changed_on_disk)
-                                # todo: create ignore list
-                                return found_dags
-
                     if mod_name in sys.modules:
                         del sys.modules[mod_name]
-
                     try:
                         sys.path.insert(0, filepath)
                         m = importlib.import_module(mod_name)
