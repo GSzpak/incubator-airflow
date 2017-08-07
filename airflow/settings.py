@@ -73,14 +73,10 @@ LOGGING_LEVEL = logging.INFO
 # the prefix to append to gunicorn worker processes after init
 GUNICORN_WORKER_READY_PREFIX = "[ready] "
 
-# can't move this to conf due to ConfigParser interpolation
-LOG_FORMAT = (
-    '[%(asctime)s] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s')
-LOG_FORMAT_WITH_PID = (
-    '[%(asctime)s] [%(process)d] {%(filename)s:%(lineno)d} %(levelname)s - %(message)s')
-LOG_FORMAT_WITH_THREAD_NAME = (
-    '[%(asctime)s] {%(filename)s:%(lineno)d} %(threadName)s %(levelname)s - %(message)s')
-SIMPLE_LOG_FORMAT = '%(asctime)s %(levelname)s - %(message)s'
+LOG_FORMAT = conf.get('core', 'log_format')
+LOG_FORMAT_WITH_PID = conf.get('core', 'log_format_with_pid')
+LOG_FORMAT_WITH_THREAD_NAME = conf.get('core', 'log_format_with_thread_name')
+SIMPLE_LOG_FORMAT = conf.get('core', 'simple_log_format')
 
 AIRFLOW_HOME = None
 SQL_ALCHEMY_CONN = None
@@ -177,4 +173,5 @@ configure_orm()
 
 KILOBYTE = 1024
 MEGABYTE = KILOBYTE * KILOBYTE
-WEB_COLORS = {'LIGHTBLUE': '#4d9de0'}
+WEB_COLORS = {'LIGHTBLUE': '#4d9de0',
+              'LIGHTORANGE': '#FF9933'}

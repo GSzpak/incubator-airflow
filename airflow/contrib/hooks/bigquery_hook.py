@@ -24,7 +24,7 @@ import time
 from apiclient.discovery import build, HttpError
 from googleapiclient import errors
 from builtins import range
-from pandas.io.gbq import GbqConnector, \
+from pandas_gbq.gbq import GbqConnector, \
     _parse_data as gbq_parse_data, \
     _check_google_client_version as gbq_check_google_client_version, \
     _test_google_api_imports as gbq_test_google_api_imports
@@ -74,7 +74,7 @@ class BigQueryHook(GoogleCloudBaseHook, DbApiHook):
         """
         raise NotImplementedError()
 
-    def get_pandas_df(self, bql, parameters=None):
+    def get_pandas_df(self, bql, parameters=None, dialect='legacy'):
         """
         Returns a Pandas DataFrame for the results produced by a BigQuery
         query. The DbApiHook method must be overridden because Pandas
@@ -85,10 +85,14 @@ class BigQueryHook(GoogleCloudBaseHook, DbApiHook):
 
         :param bql: The BigQuery SQL to execute.
         :type bql: string
+        :param parameters: The parameters to render the SQL query with (not used, leave to override superclass method)
+        :type parameters: mapping or iterable
+        :param dialect: Dialect of BigQuery SQL – legacy SQL or standard SQL
+        :type dialect: string in {'legacy', 'standard'}, default 'legacy'
         """
         service = self.get_service()
         project = self._get_field('project')
-        connector = BigQueryPandasConnector(project, service)
+        connector = BigQueryPandasConnector(project, service, dialect=dialect)
         schema, pages = connector.run_query(bql)
         dataframe_list = []
 
@@ -136,13 +140,14 @@ class BigQueryPandasConnector(GbqConnector):
     without forcing a three legged OAuth connection. Instead, we can inject
     service account credentials into the binding.
     """
-    def __init__(self, project_id, service, reauth=False, verbose=False):
+    def __init__(self, project_id, service, reauth=False, verbose=False, dialect='legacy'):
         gbq_check_google_client_version()
         gbq_test_google_api_imports()
         self.project_id = project_id
         self.reauth = reauth
         self.service = service
         self.verbose = verbose
+        self.dialect = dialect
 
 
 class BigQueryConnection(object):
@@ -189,7 +194,9 @@ class BigQueryBaseCursor(object):
             write_disposition = 'WRITE_EMPTY',
             allow_large_results=False,
             udf_config = False,
-            use_legacy_sql=True):
+            use_legacy_sql=True,
+            maximum_billing_tier=None,
+            create_disposition='CREATE_IF_NEEDED'):
         """
         Executes a BigQuery SQL query. Optionally persists results in a BigQuery
         table. See here:
@@ -204,6 +211,9 @@ class BigQueryBaseCursor(object):
             BigQuery table to save the query results.
         :param write_disposition: What to do if the table already exists in
             BigQuery.
+        :type write_disposition: string
+        :param create_disposition: Specifies whether the job is allowed to create new tables.
+        :type create_disposition: string
         :param allow_large_results: Whether to allow large results.
         :type allow_large_results: boolean
         :param udf_config: The User Defined Function configuration for the query.
@@ -211,11 +221,14 @@ class BigQueryBaseCursor(object):
         :type udf_config: list
         :param use_legacy_sql: Whether to use legacy SQL (true) or standard SQL (false).
         :type use_legacy_sql: boolean
+        :param maximum_billing_tier: Positive integer that serves as a multiplier of the basic price.
+        :type maximum_billing_tier: integer
         """
         configuration = {
             'query': {
                 'query': bql,
-                'useLegacySql': use_legacy_sql
+                'useLegacySql': use_legacy_sql,
+                'maximumBillingTier': maximum_billing_tier
             }
         }
 
@@ -229,6 +242,7 @@ class BigQueryBaseCursor(object):
             configuration['query'].update({
                 'allowLargeResults': allow_large_results,
                 'writeDisposition': write_disposition,
+                'createDisposition': create_disposition,
                 'destinationTable': {
                     'projectId': destination_project,
                     'datasetId': destination_dataset,
@@ -369,6 +383,8 @@ class BigQueryBaseCursor(object):
                  skip_leading_rows=0,
                  write_disposition='WRITE_EMPTY',
                  field_delimiter=',',
+                 max_bad_records=0,
+                 quote_character=None,
                  schema_update_options=()):
         """
         Executes a BigQuery load command to load data from Google Cloud Storage
@@ -400,6 +416,11 @@ class BigQueryBaseCursor(object):
         :type write_disposition: string
         :param field_delimiter: The delimiter to use when loading from a CSV.
         :type field_delimiter: string
+        :param max_bad_records: The maximum number of bad records that BigQuery can
+            ignore when running the job.
+        :type max_bad_records: int
+        :param quote_character: The value that is used to quote data sections in a CSV file.
+        :type quote_character: string
         :param schema_update_options: Allows the schema of the desitination
             table to be updated as a side effect of the load job.
         :type schema_update_options: list
@@ -472,6 +493,12 @@ class BigQueryBaseCursor(object):
         if source_format == 'CSV':
             configuration['load']['skipLeadingRows'] = skip_leading_rows
             configuration['load']['fieldDelimiter'] = field_delimiter
+
+        if max_bad_records:
+            configuration['load']['maxBadRecords'] = max_bad_records
+
+        if quote_character:
+            configuration['load']['quote'] = quote_character
 
         return self.run_with_configuration(configuration)
 
@@ -922,13 +949,22 @@ def _split_tablename(table_input, default_project_id, var_name=None):
         else:
             return "Format exception for {var}: ".format(var=var_name)
 
-    cmpt = table_input.split(':')
+    if table_input.count('.') + table_input.count(':') > 3:
+        raise Exception((
+            '{var}Use either : or . to specify project '
+            'got {input}'
+        ).format(var=var_print(var_name), input=table_input))
+
+    cmpt = table_input.rsplit(':', 1)
+    project_id = None
+    rest = table_input
     if len(cmpt) == 1:
         project_id = None
         rest = cmpt[0]
-    elif len(cmpt) == 2:
-        project_id = cmpt[0]
-        rest = cmpt[1]
+    elif len(cmpt) == 2 and cmpt[0].count(':') <= 1:
+        if cmpt[-1].count('.') != 2:
+            project_id = cmpt[0]
+            rest = cmpt[1]
     else:
         raise Exception((
             '{var}Expect format of (<project:)<dataset>.<table>, '

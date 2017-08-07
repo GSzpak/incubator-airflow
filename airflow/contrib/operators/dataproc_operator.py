@@ -19,6 +19,7 @@ import time
 from airflow.contrib.hooks.gcp_dataproc_hook import DataProcHook
 from airflow.models import BaseOperator
 from airflow.utils.decorators import apply_defaults
+from airflow.version import version
 from googleapiclient.errors import HttpError
 
 
@@ -46,6 +47,7 @@ class DataprocClusterCreateOperator(BaseOperator):
                  storage_bucket=None,
                  init_actions_uris=None,
                  metadata=None,
+                 image_version=None,
                  properties=None,
                  master_machine_type='n1-standard-4',
                  master_disk_size=500,
@@ -81,6 +83,8 @@ class DataprocClusterCreateOperator(BaseOperator):
         :param metadata: dict of key-value google compute engine metadata entries
             to add to all instances
         :type metadata: dict
+        :param image_version: the version of software inside the Dataproc cluster
+        :type image_version: string
         :param properties: dict of properties to set on
             config files (e.g. spark-defaults.conf), see
             https://cloud.google.com/dataproc/docs/reference/rest/v1/ \
@@ -118,6 +122,7 @@ class DataprocClusterCreateOperator(BaseOperator):
         self.storage_bucket = storage_bucket
         self.init_actions_uris = init_actions_uris
         self.metadata = metadata
+        self.image_version = image_version
         self.properties = properties
         self.master_machine_type = master_machine_type
         self.master_disk_size = master_disk_size
@@ -175,20 +180,7 @@ class DataprocClusterCreateOperator(BaseOperator):
                     return
                 time.sleep(15)
 
-    def execute(self, context):
-        hook = DataProcHook(
-            gcp_conn_id=self.google_cloud_conn_id,
-            delegate_to=self.delegate_to
-        )
-        service = hook.get_conn()
-
-        if self._get_cluster(service):
-            logging.info('Cluster {} already exists... Checking status...'.format(
-                            self.cluster_name
-                        ))
-            self._wait_for_done(service)
-            return True
-
+    def _build_cluster_data(self):
         zone_uri = \
             'https://www.googleapis.com/compute/v1/projects/{}/zones/{}'.format(
                 self.project_id, self.zone
@@ -235,12 +227,19 @@ class DataprocClusterCreateOperator(BaseOperator):
                 },
                 'isPreemptible': True
             }
-        if self.labels:
-            cluster_data['labels'] = self.labels
+
+        cluster_data['labels'] = self.labels if self.labels else {}
+        # Dataproc labels must conform to the following regex:
+        # [a-z]([-a-z0-9]*[a-z0-9])? (current airflow version string follows
+        # semantic versioning spec: x.y.z).
+        cluster_data['labels'].update({'airflow-version':
+                                       'v' + version.replace('.', '-')})
         if self.storage_bucket:
             cluster_data['config']['configBucket'] = self.storage_bucket
         if self.metadata:
             cluster_data['config']['gceClusterConfig']['metadata'] = self.metadata
+        if self.image_version:
+            cluster_data['config']['softwareConfig']['imageVersion'] = self.image_version
         if self.properties:
             cluster_data['config']['softwareConfig']['properties'] = self.properties
         if self.init_actions_uris:
@@ -248,7 +247,23 @@ class DataprocClusterCreateOperator(BaseOperator):
                 {'executableFile': uri} for uri in self.init_actions_uris
             ]
             cluster_data['config']['initializationActions'] = init_actions_dict
+        return cluster_data
 
+    def execute(self, context):
+        hook = DataProcHook(
+            gcp_conn_id=self.google_cloud_conn_id,
+            delegate_to=self.delegate_to
+        )
+        service = hook.get_conn()
+
+        if self._get_cluster(service):
+            logging.info('Cluster {} already exists... Checking status...'.format(
+                            self.cluster_name
+                        ))
+            self._wait_for_done(service)
+            return True
+
+        cluster_data = self._build_cluster_data()
         try:
             service.projects().regions().clusters().create(
                 projectId=self.project_id,
@@ -461,7 +476,8 @@ class DataProcHiveOperator(BaseOperator):
     @apply_defaults
     def __init__(
             self,
-            query,
+            query=None,
+            query_uri=None,
             variables=None,
             job_name='{{task.task_id}}_{{ds_nodash}}',
             dataproc_cluster='cluster-1',
@@ -476,6 +492,8 @@ class DataProcHiveOperator(BaseOperator):
 
         :param query: The query or reference to the query file (q extension).
         :type query: string
+        :param query_uri: The uri of a hive script on Cloud Storage.
+        :type query_uri: string
         :param variables: Map of named parameters for the query.
         :type variables: dict
         :param job_name: The job name used in the DataProc cluster. This name by default
@@ -501,6 +519,7 @@ class DataProcHiveOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.delegate_to = delegate_to
         self.query = query
+        self.query_uri = query_uri
         self.variables = variables
         self.job_name = job_name
         self.dataproc_cluster = dataproc_cluster
@@ -514,7 +533,10 @@ class DataProcHiveOperator(BaseOperator):
         job = hook.create_job_template(self.task_id, self.dataproc_cluster, "hiveJob",
                                        self.dataproc_properties)
 
-        job.add_query(self.query)
+        if self.query is None:
+            job.add_query_uri(self.query_uri)
+        else:
+            job.add_query(self.query)
         job.add_variables(self.variables)
         job.add_jar_file_uris(self.dataproc_jars)
         job.set_job_name(self.job_name)
@@ -533,7 +555,8 @@ class DataProcSparkSqlOperator(BaseOperator):
     @apply_defaults
     def __init__(
             self,
-            query,
+            query=None,
+            query_uri=None,
             variables=None,
             job_name='{{task.task_id}}_{{ds_nodash}}',
             dataproc_cluster='cluster-1',
@@ -548,6 +571,8 @@ class DataProcSparkSqlOperator(BaseOperator):
 
         :param query: The query or reference to the query file (q extension).
         :type query: string
+        :param query_uri: The uri of a spark sql script on Cloud Storage.
+        :type query_uri: string
         :param variables: Map of named parameters for the query.
         :type variables: dict
         :param job_name: The job name used in the DataProc cluster. This name by default
@@ -573,6 +598,7 @@ class DataProcSparkSqlOperator(BaseOperator):
         self.gcp_conn_id = gcp_conn_id
         self.delegate_to = delegate_to
         self.query = query
+        self.query_uri = query_uri
         self.variables = variables
         self.job_name = job_name
         self.dataproc_cluster = dataproc_cluster
@@ -586,7 +612,10 @@ class DataProcSparkSqlOperator(BaseOperator):
         job = hook.create_job_template(self.task_id, self.dataproc_cluster, "sparkSqlJob",
                                        self.dataproc_properties)
 
-        job.add_query(self.query)
+        if self.query is None:
+            job.add_query_uri(self.query_uri)
+        else:
+            job.add_query(self.query)
         job.add_variables(self.variables)
         job.add_jar_file_uris(self.dataproc_jars)
         job.set_job_name(self.job_name)

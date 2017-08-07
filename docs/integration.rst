@@ -1,15 +1,87 @@
 Integration
 ===========
 
+- :ref:`Azure`
 - :ref:`AWS`
+- :ref:`Databricks`
 - :ref:`GCP`
+
+
+.. _Azure:
+
+Azure: Microsoft Azure
+----------------------
+
+Airflow has limited support for Microsoft Azure: interfaces exist only for Azure Blob
+Storage. Note that the Hook, Sensor and Operator are in the contrib section.
+
+Azure Blob Storage
+''''''''''''''''''
+
+All classes communicate via the Window Azure Storage Blob protocol. Make sure that a
+Airflow connection of type `wasb` exists. Authorization can be done by supplying a
+login (=Storage account name) and password (=KEY), or login and SAS token in the extra
+field (see connection `wasb_default` for an example).
+
+- :ref:`WasbBlobSensor`: Checks if a blob is present on Azure Blob storage.
+- :ref:`WasbPrefixSensor`: Checks if blobs matching a prefix are present on Azure Blob storage.
+- :ref:`FileToWasbOperator`: Uploads a local file to a container as a blob.
+- :ref:`WasbHook`: Interface with Azure Blob Storage.
+
+.. _WasbBlobSensor:
+
+WasbBlobSensor
+"""""""""""""""
+
+.. autoclass:: airflow.contrib.sensors.wasb_sensor.WasbBlobSensor
+
+.. _WasbPrefixSensor:
+
+WasbPrefixSensor
+"""""""""""""""""
+
+.. autoclass:: airflow.contrib.sensors.wasb_sensor.WasbPrefixSensor
+
+.. _FileToWasbOperator:
+
+FileToWasbOperator
+"""""""""""""""""""
+
+.. autoclass:: airflow.contrib.operators.file_to_wasb.FileToWasbOperator
+
+.. _WasbHook:
+
+WasbHook
+"""""""""
+
+.. autoclass:: airflow.contrib.hooks.wasb_hook.WasbHook
+
+
 
 .. _AWS:
 
 AWS: Amazon Webservices
 -----------------------
 
----
+To be filled.
+
+
+
+.. _Databricks:
+
+Databricks
+----------
+
+`Databricks <https://databricks.com/>`_ has contributed an Airflow operator which enables
+submitting runs to the Databricks platform. Internally the operator talks to the
+``api/2.0/jobs/runs/submit`` `endpoint <https://docs.databricks.com/api/latest/jobs.html#runs-submit>`_.
+
+DatabricksSubmitRunOperator
+'''''''''''''''''''''''''''
+
+.. autoclass:: airflow.contrib.operators.databricks_operator.DatabricksSubmitRunOperator
+
+
 
 .. _GCP:
 
@@ -24,7 +96,7 @@ BigQuery
 ''''''''
 
 BigQuery Operators
-^^^^^^^^^^^^^^^^^^
+""""""""""""""""""
 
 - :ref:`BigQueryCheckOperator` : Performs checks against a SQL query that will return a single row with different values.
 - :ref:`BigQueryValueCheckOperator` : Performs a simple value check using SQL code.
@@ -37,48 +109,48 @@ BigQuery Operators
 .. _BigQueryCheckOperator:
 
 BigQueryCheckOperator
-"""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.bigquery_check_operator.BigQueryCheckOperator
 
 .. _BigQueryValueCheckOperator:
 
 BigQueryValueCheckOperator
-""""""""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.bigquery_check_operator.BigQueryValueCheckOperator
 
 .. _BigQueryIntervalCheckOperator:
 
 BigQueryIntervalCheckOperator
-"""""""""""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.bigquery_check_operator.BigQueryIntervalCheckOperator
 
 .. _BigQueryOperator:
 
 BigQueryOperator
-""""""""""""""""
+^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.bigquery_operator.BigQueryOperator
 
 .. _BigQueryToBigQueryOperator:
 
 BigQueryToBigQueryOperator
-""""""""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.bigquery_to_bigquery.BigQueryToBigQueryOperator
 
 .. _BigQueryToCloudStorageOperator:
 
 BigQueryToCloudStorageOperator
-""""""""""""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.bigquery_to_gcs.BigQueryToCloudStorageOperator
 
 
 BigQueryHook
-^^^^^^^^^^^^
+""""""""""""
 
 .. autoclass:: airflow.contrib.hooks.bigquery_hook.BigQueryHook
     :members:
@@ -88,14 +160,15 @@ Cloud DataFlow
 ''''''''''''''
 
 DataFlow Operators
-^^^^^^^^^^^^^^^^^^
+""""""""""""""""""
 
-- :ref:`DataFlowJavaOperator` :
+- :ref:`DataFlowJavaOperator` : launching Cloud Dataflow jobs written in Java.
+- :ref:`DataFlowPythonOperator` : launching Cloud Dataflow jobs written in python.
 
 .. _DataFlowJavaOperator:
 
 DataFlowJavaOperator
-""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.dataflow_operator.DataFlowJavaOperator
 
@@ -133,8 +206,16 @@ DataFlowJavaOperator
         },
         dag=dag)
 
+.. _DataFlowPythonOperator:
+
+DataFlowPythonOperator
+^^^^^^^^^^^^^^^^^^^^^^
+
+.. autoclass:: airflow.contrib.operators.dataflow_operator.DataFlowPythonOperator
+
+
 DataFlowHook
-^^^^^^^^^^^^
+""""""""""""
 
 .. autoclass:: airflow.contrib.hooks.gcp_dataflow_hook.DataFlowHook
     :members:
@@ -145,7 +226,7 @@ Cloud DataProc
 ''''''''''''''
 
 DataProc Operators
-^^^^^^^^^^^^^^^^^^
+""""""""""""""""""
 
 - :ref:`DataProcPigOperator` : Start a Pig query Job on a Cloud DataProc cluster.
 - :ref:`DataProcHiveOperator` : Start a Hive query Job on a Cloud DataProc cluster.
@@ -157,35 +238,35 @@ DataProc Operators
 .. _DataProcPigOperator:
 
 DataProcPigOperator
-"""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.dataproc_operator.DataProcPigOperator
 
 .. _DataProcHiveOperator:
 
 DataProcHiveOperator
-""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.dataproc_operator.DataProcHiveOperator
 
 .. _DataProcSparkSqlOperator:
 
 DataProcSparkSqlOperator
-""""""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.dataproc_operator.DataProcSparkSqlOperator
 
 .. _DataProcSparkOperator:
 
 DataProcSparkOperator
-"""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.dataproc_operator.DataProcSparkOperator
 
 .. _DataProcHadoopOperator:
 
 DataProcHadoopOperator
-""""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.dataproc_operator.DataProcHadoopOperator
 
@@ -201,22 +282,73 @@ DataProcPySparkOperator
 Cloud Datastore
 '''''''''''''''
 
-Datastore Operators
-^^^^^^^^^^^^^^^^^^^
-
 DatastoreHook
-~~~~~~~~~~~~~
+"""""""""""""
 
 .. autoclass:: airflow.contrib.hooks.datastore_hook.DatastoreHook
     :members:
 
+
+Cloud ML Engine
+'''''''''''''''
+
+Cloud ML Engine Operators
+"""""""""""""""""""""""""
+
+- :ref:`CloudMLBatchPredictionOperator` : Start a Cloud ML Engine batch prediction job.
+- :ref:`CloudMLModelOperator` : Manages a Cloud ML Engine model.
+- :ref:`CloudMLTrainingOperator` : Start a Cloud ML Engine training job.
+- :ref:`CloudMLVersionOperator` : Manages a Cloud ML Engine model version.
+
+.. _CloudMLBatchPredictionOperator:
+
+CloudMLBatchPredictionOperator
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. autoclass:: airflow.contrib.operators.cloudml_operator.CloudMLBatchPredictionOperator
+    :members:
+
+.. _CloudMLModelOperator:
+
+CloudMLModelOperator
+^^^^^^^^^^^^^^^^^^^^
+
+.. autoclass:: airflow.contrib.operators.cloudml_operator.CloudMLModelOperator
+    :members:
+
+.. _CloudMLTrainingOperator:
+
+CloudMLTrainingOperator
+^^^^^^^^^^^^^^^^^^^^^^^
+
+.. autoclass:: airflow.contrib.operators.cloudml_operator.CloudMLTrainingOperator
+    :members:
+
+.. _CloudMLVersionOperator:
+
+CloudMLVersionOperator
+^^^^^^^^^^^^^^^^^^^^^^^
+
+.. autoclass:: airflow.contrib.operators.cloudml_operator.CloudMLVersionOperator
+    :members:
+
+Cloud ML Engine Hook
+""""""""""""""""""""
+
+.. _CloudMLHook:
+
+CloudMLHook
+^^^^^^^^^^^
+
+.. autoclass:: airflow.contrib.hooks.gcp_cloudml_hook.CloudMLHook
+    :members:
 
 
 Cloud Storage
 '''''''''''''
 
 Storage Operators
-^^^^^^^^^^^^^^^^^
+"""""""""""""""""
 
 - :ref:`GoogleCloudStorageDownloadOperator` : Downloads a file from Google Cloud Storage.
 - :ref:`GoogleCloudStorageToBigQueryOperator` : Loads files from Google cloud storage into BigQuery.
@@ -224,7 +356,7 @@ Storage Operators
 .. _GoogleCloudStorageDownloadOperator:
 
 GoogleCloudStorageDownloadOperator
-""""""""""""""""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.gcs_download_operator.GoogleCloudStorageDownloadOperator
     :members:
@@ -232,15 +364,14 @@ GoogleCloudStorageDownloadOperator
 .. _GoogleCloudStorageToBigQueryOperator:
 
 GoogleCloudStorageToBigQueryOperator
-""""""""""""""""""""""""""""""""""""
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 .. autoclass:: airflow.contrib.operators.gcs_to_bq.GoogleCloudStorageToBigQueryOperator
     :members:
 
 
 GoogleCloudStorageHook
-^^^^^^^^^^^^^^^^^^^^^^
+""""""""""""""""""""""
 
 .. autoclass:: airflow.contrib.hooks.gcs_hook.GoogleCloudStorageHook
     :members:
-

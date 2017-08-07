@@ -15,12 +15,10 @@
 import datetime
 import logging
 
-from airflow.models import BaseOperator, TaskInstance
-from airflow.utils.state import State
-from airflow import settings
+from airflow.models import BaseOperator, SkipMixin
 
 
-class LatestOnlyOperator(BaseOperator):
+class LatestOnlyOperator(BaseOperator, SkipMixin):
     """
     Allows a workflow to skip tasks that are not running during the most
     recent schedule interval.
@@ -34,7 +32,7 @@ class LatestOnlyOperator(BaseOperator):
     def execute(self, context):
         # If the DAG Run is externally triggered, then return without
         # skipping downstream tasks
-        if context['dag_run'].external_trigger:
+        if context['dag_run'] and context['dag_run'].external_trigger:
             logging.info("""Externally triggered DAG_Run:
                          allowing execution to proceed.""")
             return
@@ -46,19 +44,18 @@ class LatestOnlyOperator(BaseOperator):
         logging.info(
             'Checking latest only with left_window: %s right_window: %s '
             'now: %s', left_window, right_window, now)
+
         if not left_window < now <= right_window:
             logging.info('Not latest execution, skipping downstream.')
-            session = settings.Session()
-            for task in context['task'].downstream_list:
-                ti = TaskInstance(
-                    task, execution_date=context['ti'].execution_date)
-                logging.info('Skipping task: %s', ti.task_id)
-                ti.state = State.SKIPPED
-                ti.start_date = now
-                ti.end_date = now
-                session.merge(ti)
-            session.commit()
-            session.close()
+
+            downstream_tasks = context['task'].get_flat_relatives(upstream=False)
+            logging.debug("Downstream task_ids {}".format(downstream_tasks))
+
+            if downstream_tasks:
+                self.skip(context['dag_run'],
+                          context['ti'].execution_date,
+                          downstream_tasks)
+
             logging.info('Done.')
         else:
             logging.info('Latest, allowing execution to proceed.')

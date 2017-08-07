@@ -28,25 +28,32 @@ log = logging.getLogger(__name__)
 
 class SqoopHook(BaseHook):
     """
-    This Hook is a wrapper around the sqoop 1 binary. To be able to use te hook
+    This hook is a wrapper around the sqoop 1 binary. To be able to use the hook
     it is required that "sqoop" is in the PATH.
-    :param job_tracker: (from json) specify a job tracker local|jobtracker:port
-    :type job_tracker: str
-    :param namenode: (from json) specify a namenode
-    :type namenode: str
-    :param lib_jars: (from json) specify comma separated jar
-        files to include in the classpath.
-    :type lib_jars: str
-    :param files: (from json) specify comma separated files to be copied to
-        the map reduce cluster
-    :type files: (from json) str
-    :param archives: (from json)  specify comma separated archives to be
-        unarchived on the compute machines.
-    :type archives: str
+
+    Additional arguments that can be passed via the 'extra' JSON field of the
+    sqoop connection:
+    * job_tracker: Job tracker local|jobtracker:port.
+    * namenode: Namenode.
+    * lib_jars: Comma separated jar files to include in the classpath.
+    * files: Comma separated files to be copied to the map reduce cluster.
+    * archives: Comma separated archives to be unarchived on the compute
+        machines.
+    * password_file: Path to file containing the password.
+
+    :param conn_id: Reference to the sqoop connection.
+    :type conn_id: str
+    :param verbose: Set sqoop to verbose.
+    :type verbose: bool
+    :param num_mappers: Number of map tasks to import in parallel.
+    :type num_mappers: str
+    :param properties: Properties to set via the -D argument
+    :type properties: dict
     """
 
     def __init__(self, conn_id='sqoop_default', verbose=False,
-                 num_mappers=None, properties=None):
+                 num_mappers=None, hcatalog_database=None,
+                 hcatalog_table=None, properties=None):
         # No mutable types in the default parameters
         if properties is None:
             properties = {}
@@ -58,12 +65,22 @@ class SqoopHook(BaseHook):
         self.files = connection_parameters.get('files', None)
         self.archives = connection_parameters.get('archives', None)
         self.password_file = connection_parameters.get('password_file', None)
+        self.hcatalog_database = hcatalog_database
+        self.hcatalog_table = hcatalog_table
         self.verbose = verbose
-        self.num_mappers = str(num_mappers)
+        self.num_mappers = num_mappers
         self.properties = properties
 
     def get_conn(self):
         pass
+
+    def cmd_mask_password(self, cmd):
+        try:
+            password_index = cmd.index('--password')
+            cmd[password_index + 1] = 'MASKED'
+        except ValueError:
+            logging.debug("No password in sqoop cmd")
+        return cmd
 
     def Popen(self, cmd, **kwargs):
         """
@@ -73,19 +90,21 @@ class SqoopHook(BaseHook):
         :param kwargs: extra arguments to Popen (see subprocess.Popen)
         :return: handle to subprocess
         """
-        process = subprocess.Popen(cmd,
-                                   stdout=subprocess.PIPE,
-                                   stderr=subprocess.PIPE,
-                                   **kwargs)
-        output, stderr = process.communicate()
+        logging.info("Executing command: {}".format(' '.join(cmd)))
+        sp = subprocess.Popen(cmd,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT,
+                              **kwargs)
 
-        if process.returncode != 0:
-            raise AirflowException((
-                                       "Cannot execute {} on {}. Error code is: {}"
-                                       "Output: {}, Stderr: {}"
-                                   ).format(cmd, self.conn.host,
-                                            process.returncode, output,
-                                            stderr))
+        for line in iter(sp.stdout):
+            logging.info(line.strip())
+
+        sp.wait()
+
+        logging.info("Command exited with return code {0}".format(sp.returncode))
+
+        if sp.returncode:
+            raise AirflowException("Sqoop command failed: {}".format(' '.join(cmd)))
 
     def _prepare_command(self, export=False):
         if export:
@@ -112,7 +131,11 @@ class SqoopHook(BaseHook):
         if self.archives:
             connection_cmd += ["-archives", self.archives]
         if self.num_mappers:
-            connection_cmd += ["--num-mappers", self.num_mappers]
+            connection_cmd += ["--num-mappers", str(self.num_mappers)]
+        if self.hcatalog_database:
+            connection_cmd += ["--hcatalog-database", self.hcatalog_database]
+        if self.hcatalog_table:
+            connection_cmd += ["--hcatalog-table", self.hcatalog_table]
 
         for key, value in self.properties.items():
             connection_cmd += ["-D", "{}={}".format(key, value)]
@@ -132,8 +155,11 @@ class SqoopHook(BaseHook):
             return ["--as-sequencefile"]
         elif file_type == "parquet":
             return ["--as-parquetfile"]
-        else:
+        elif file_type == "text":
             return ["--as-textfile"]
+        else:
+            raise AirflowException("Argument file_type should be 'avro', "
+                                   "'sequence', 'parquet' or 'text'.")
 
     def _import_cmd(self, target_dir, append, file_type, split_by, direct,
                     driver):
@@ -249,8 +275,10 @@ class SqoopHook(BaseHook):
         if relaxed_isolation:
             cmd += ["--relaxed-isolation"]
 
-        # The required options
-        cmd += ["--export-dir", export_dir]
+        if export_dir:
+            cmd += ["--export-dir", export_dir]
+
+        # The required option
         cmd += ["--table", table]
 
         return cmd

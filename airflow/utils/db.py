@@ -130,6 +130,10 @@ def initdb():
             schema='hive', port=3400))
     merge_conn(
         models.Connection(
+            conn_id='google_cloud_default', conn_type='google_cloud_platform',
+            schema='default',))
+    merge_conn(
+        models.Connection(
             conn_id='hive_cli_default', conn_type='hive_cli',
             schema='default',))
     merge_conn(
@@ -169,6 +173,10 @@ def initdb():
         models.Connection(
             conn_id='vertica_default', conn_type='vertica',
             host='localhost', port=5433))
+    merge_conn(
+        models.Connection(
+            conn_id='wasb_default', conn_type='wasb',
+            extra='{"sas_token": null}'))
     merge_conn(
         models.Connection(
             conn_id='webhdfs_default', conn_type='hdfs',
@@ -245,6 +253,10 @@ def initdb():
                     ]
                 }
             '''))
+    merge_conn(
+        models.Connection(
+            conn_id='databricks_default', conn_type='databricks',
+            host='localhost'))
 
     # Known event types
     KET = models.KnownEventType

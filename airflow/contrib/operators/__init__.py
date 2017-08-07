@@ -32,11 +32,12 @@ import sys
 #
 # ------------------------------------------------------------------------
 _operators = {
-    'ssh_execute_operator': ['SSHExecuteOperator'],
+    'ssh_operator': ['SSHOperator'],
     'vertica_operator': ['VerticaOperator'],
     'vertica_to_hive': ['VerticaToHiveTransfer'],
     'qubole_operator': ['QuboleOperator'],
     'spark_submit_operator': ['SparkSubmitOperator'],
+    'file_to_wasb': ['FileToWasbOperator'],
     'fs_operator': ['FileSensor']
 }
 

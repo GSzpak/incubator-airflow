@@ -984,50 +984,48 @@ class CoreTest(unittest.TestCase):
         session.query(models.DagStat).delete()
         session.commit()
 
-        with warnings.catch_warnings(record=True) as caught_warnings:
-            models.DagStat.clean_dirty([], session=session)
-        self.assertEqual([], caught_warnings)
+        models.DagStat.update([], session=session)
 
         run1 = self.dag_bash.create_dagrun(
             run_id="run1",
             execution_date=DEFAULT_DATE,
             state=State.RUNNING)
 
-        with warnings.catch_warnings(record=True) as caught_warnings:
-            models.DagStat.clean_dirty([self.dag_bash.dag_id], session=session)
-        self.assertEqual([], caught_warnings)
+        models.DagStat.update([self.dag_bash.dag_id], session=session)
 
         qry = session.query(models.DagStat).all()
 
-        self.assertEqual(1, len(qry))
+        self.assertEqual(3, len(qry))
         self.assertEqual(self.dag_bash.dag_id, qry[0].dag_id)
-        self.assertEqual(State.RUNNING, qry[0].state)
-        self.assertEqual(1, qry[0].count)
-        self.assertFalse(qry[0].dirty)
+        for stats in qry:
+            if stats.state == State.RUNNING:
+                self.assertEqual(stats.count, 1)
+            else:
+                self.assertEqual(stats.count, 0)
+            self.assertFalse(stats.dirty)
 
         run2 = self.dag_bash.create_dagrun(
             run_id="run2",
             execution_date=DEFAULT_DATE+timedelta(days=1),
             state=State.RUNNING)
 
-        with warnings.catch_warnings(record=True) as caught_warnings:
-            models.DagStat.clean_dirty([self.dag_bash.dag_id], session=session)
-        self.assertEqual([], caught_warnings)
+        models.DagStat.update([self.dag_bash.dag_id], session=session)
 
         qry = session.query(models.DagStat).all()
 
-        self.assertEqual(1, len(qry))
+        self.assertEqual(3, len(qry))
         self.assertEqual(self.dag_bash.dag_id, qry[0].dag_id)
-        self.assertEqual(State.RUNNING, qry[0].state)
-        self.assertEqual(2, qry[0].count)
-        self.assertFalse(qry[0].dirty)
+        for stats in qry:
+            if stats.state == State.RUNNING:
+                self.assertEqual(stats.count, 2)
+            else:
+                self.assertEqual(stats.count, 0)
+            self.assertFalse(stats.dirty)
 
         session.query(models.DagRun).first().state = State.SUCCESS
         session.commit()
 
-        with warnings.catch_warnings(record=True) as caught_warnings:
-            models.DagStat.clean_dirty([self.dag_bash.dag_id], session=session)
-        self.assertEqual([], caught_warnings)
+        models.DagStat.update([self.dag_bash.dag_id], session=session)
 
         qry = session.query(models.DagStat).filter(models.DagStat.state == State.SUCCESS).all()
         self.assertEqual(1, len(qry))
@@ -1064,14 +1062,34 @@ class CoreTest(unittest.TestCase):
 
 
 class CliTests(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        super(CliTests, cls).setUpClass()
+        cls._cleanup()
+
     def setUp(self):
+        super(CliTests, self).setUp()
         configuration.load_test_config()
         app = application.create_app()
         app.config['TESTING'] = True
         self.parser = cli.CLIFactory.get_parser()
-        self.dagbag = models.DagBag(
-            dag_folder=DEV_NULL, include_examples=True)
-        # Persist DAGs
+        self.dagbag = models.DagBag(dag_folder=DEV_NULL, include_examples=True)
+        self.session = Session()
+
+    def tearDown(self):
+        self._cleanup(session=self.session)
+        super(CliTests, self).tearDown()
+
+    @staticmethod
+    def _cleanup(session=None):
+        if session is None:
+            session = Session()
+
+        session.query(models.Pool).delete()
+        session.query(models.Variable).delete()
+        session.commit()
+        session.close()
 
     def test_cli_list_dags(self):
         args = self.parser.parse_args(['list_dags', '--report'])
@@ -1086,11 +1104,17 @@ class CliTests(unittest.TestCase):
             'list_tasks', 'example_bash_operator', '--tree'])
         cli.list_tasks(args)
 
-    def test_cli_initdb(self):
+    @mock.patch("airflow.bin.cli.db_utils.initdb")
+    def test_cli_initdb(self, initdb_mock):
         cli.initdb(self.parser.parse_args(['initdb']))
 
-    def test_cli_resetdb(self):
+        initdb_mock.assert_called_once_with()
+
+    @mock.patch("airflow.bin.cli.db_utils.resetdb")
+    def test_cli_resetdb(self, resetdb_mock):
         cli.resetdb(self.parser.parse_args(['resetdb', '--yes']))
+
+        resetdb_mock.assert_called_once_with()
 
     def test_cli_connections_list(self):
         with mock.patch('sys.stdout',
@@ -1098,8 +1122,8 @@ class CliTests(unittest.TestCase):
             cli.connections(self.parser.parse_args(['connections', '--list']))
             stdout = mock_stdout.getvalue()
         conns = [[x.strip("'") for x in re.findall("'\w+'", line)[:2]]
-                  for ii, line in enumerate(stdout.split('\n'))
-                  if ii % 2 == 1]
+                 for ii, line in enumerate(stdout.split('\n'))
+                 if ii % 2 == 1]
         conns = [conn for conn in conns if len(conn) > 0]
 
         # Assert that some of the connections are present in the output as
@@ -1111,6 +1135,7 @@ class CliTests(unittest.TestCase):
         self.assertIn(['mssql_default', 'mssql'], conns)
         self.assertIn(['mysql_default', 'mysql'], conns)
         self.assertIn(['postgres_default', 'postgres'], conns)
+        self.assertIn(['wasb_default', 'wasb'], conns)
 
         # Attempt to list connections with invalid cli args
         with mock.patch('sys.stdout',
@@ -1329,6 +1354,16 @@ class CliTests(unittest.TestCase):
             'clear', 'example_subdag_operator', '--no_confirm', '--exclude_subdags'])
         cli.clear(args)
 
+    def test_get_dags(self):
+        dags = cli.get_dags(self.parser.parse_args(['clear', 'example_subdag_operator', '-c']))
+        self.assertEqual(len(dags), 1)
+
+        dags = cli.get_dags(self.parser.parse_args(['clear', 'subdag', '-dx', '-c']))
+        self.assertGreater(len(dags), 1)
+
+        with self.assertRaises(AirflowException):
+            cli.get_dags(self.parser.parse_args(['clear', 'foobar', '-dx', '-c']))
+
     def test_backfill(self):
         cli.backfill(self.parser.parse_args([
             'backfill', 'example_bash_operator',
@@ -1362,14 +1397,27 @@ class CliTests(unittest.TestCase):
                 '-c', 'NOT JSON'])
         )
 
-    def test_pool(self):
-        # Checks if all subcommands are properly received
-        cli.pool(self.parser.parse_args([
-            'pool', '-s', 'foo', '1', '"my foo pool"']))
-        cli.pool(self.parser.parse_args([
-            'pool', '-g', 'foo']))
-        cli.pool(self.parser.parse_args([
-            'pool', '-x', 'foo']))
+    def test_pool_create(self):
+        cli.pool(self.parser.parse_args(['pool', '-s', 'foo', '1', 'test']))
+        self.assertEqual(self.session.query(models.Pool).count(), 1)
+
+    def test_pool_get(self):
+        cli.pool(self.parser.parse_args(['pool', '-s', 'foo', '1', 'test']))
+        try:
+            cli.pool(self.parser.parse_args(['pool', '-g', 'foo']))
+        except Exception as e:
+            self.fail("The 'pool -g foo' command raised unexpectedly: %s" % e)
+
+    def test_pool_delete(self):
+        cli.pool(self.parser.parse_args(['pool', '-s', 'foo', '1', 'test']))
+        cli.pool(self.parser.parse_args(['pool', '-x', 'foo']))
+        self.assertEqual(self.session.query(models.Pool).count(), 0)
+
+    def test_pool_no_args(self):
+        try:
+            cli.pool(self.parser.parse_args(['pool']))
+        except Exception as e:
+            self.fail("The 'pool' command raised unexpectedly: %s" % e)
 
     def test_variables(self):
         # Checks if all subcommands are properly received
@@ -1423,12 +1471,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual('original', models.Variable.get('bar'))
         self.assertEqual('{"foo": "bar"}', models.Variable.get('foo'))
 
-        session = settings.Session()
-        session.query(Variable).delete()
-        session.commit()
-        session.close()
         os.remove('variables1.json')
         os.remove('variables2.json')
+
+    def _wait_pidfile(self, pidfile):
+        while True:
+            try:
+                with open(pidfile) as f:
+                    return int(f.read())
+            except:
+                sleep(1)
 
     def test_cli_webserver_foreground(self):
         import subprocess
@@ -1449,17 +1501,25 @@ class CliTests(unittest.TestCase):
 
     @unittest.skipIf("TRAVIS" in os.environ and bool(os.environ["TRAVIS"]),
                      "Skipping test due to lack of required file permission")
+    def test_cli_webserver_foreground_with_pid(self):
+        import subprocess
+
+        # Run webserver in foreground with --pid option
+        pidfile = tempfile.mkstemp()[1]
+        p = subprocess.Popen(["airflow", "webserver", "--pid", pidfile])
+
+        # Check the file specified by --pid option exists
+        self._wait_pidfile(pidfile)
+
+        # Terminate webserver
+        p.terminate()
+        p.wait()
+
+    @unittest.skipIf("TRAVIS" in os.environ and bool(os.environ["TRAVIS"]),
+                     "Skipping test due to lack of required file permission")
     def test_cli_webserver_background(self):
         import subprocess
         import psutil
-
-        def wait_pidfile(pidfile):
-            while True:
-                try:
-                    with open(pidfile) as f:
-                        return int(f.read())
-                except IOError:
-                    sleep(1)
 
         # Confirm that webserver hasn't been launched.
         self.assertEqual(1, subprocess.Popen(["pgrep", "-c", "airflow"]).wait())
@@ -1468,7 +1528,7 @@ class CliTests(unittest.TestCase):
         # Run webserver in background.
         subprocess.Popen(["airflow", "webserver", "-D"])
         pidfile = cli.setup_locations("webserver")[0]
-        wait_pidfile(pidfile)
+        self._wait_pidfile(pidfile)
 
         # Assert that gunicorn and its monitor are launched.
         self.assertEqual(0, subprocess.Popen(["pgrep", "-c", "airflow"]).wait())
@@ -1476,7 +1536,7 @@ class CliTests(unittest.TestCase):
 
         # Terminate monitor process.
         pidfile = cli.setup_locations("webserver-monitor")[0]
-        pid = wait_pidfile(pidfile)
+        pid = self._wait_pidfile(pidfile)
         p = psutil.Process(pid)
         p.terminate()
         p.wait()
@@ -1585,6 +1645,7 @@ class WebUiTests(unittest.TestCase):
         self.dag_bash2 = self.dagbag.dags['test_example_bash_operator']
         self.sub_dag = self.dagbag.dags['example_subdag_operator']
         self.runme_0 = self.dag_bash.get_task('runme_0')
+        self.example_xcom = self.dagbag.dags['example_xcom']
 
         self.dag_bash2.create_dagrun(
             run_id="test_{}".format(models.DagRun.id_for_date(datetime.now())),
@@ -1594,6 +1655,13 @@ class WebUiTests(unittest.TestCase):
         )
 
         self.sub_dag.create_dagrun(
+            run_id="test_{}".format(models.DagRun.id_for_date(datetime.now())),
+            execution_date=DEFAULT_DATE,
+            start_date=datetime.now(),
+            state=State.RUNNING
+        )
+
+        self.example_xcom.create_dagrun(
             run_id="test_{}".format(models.DagRun.id_for_date(datetime.now())),
             execution_date=DEFAULT_DATE,
             start_date=datetime.now(),
@@ -1645,8 +1713,12 @@ class WebUiTests(unittest.TestCase):
         self.assertIn("example_bash_operator", response.data.decode('utf-8'))
         response = self.app.get(
             '/admin/airflow/landing_times?'
-            'days=30&dag_id=example_bash_operator')
-        self.assertIn("example_bash_operator", response.data.decode('utf-8'))
+            'days=30&dag_id=test_example_bash_operator')
+        self.assertIn("test_example_bash_operator", response.data.decode('utf-8'))
+        response = self.app.get(
+            '/admin/airflow/landing_times?'
+            'days=30&dag_id=example_xcom')
+        self.assertIn("example_xcom", response.data.decode('utf-8'))
         response = self.app.get(
             '/admin/airflow/gantt?dag_id=example_bash_operator')
         self.assertIn("example_bash_operator", response.data.decode('utf-8'))
@@ -2006,7 +2078,7 @@ class HttpOpSensorTest(unittest.TestCase):
             task_id='http_sensor_check',
             http_conn_id='http_default',
             endpoint='/search',
-            params={"client": "ubuntu", "q": "airflow", 'date': '{{ds}}'},
+            request_params={"client": "ubuntu", "q": "airflow", 'date': '{{ds}}'},
             headers={},
             response_check=lambda response: (
                 "airbnb/airflow/" + DEFAULT_DATE.strftime('%Y-%m-%d')
@@ -2251,6 +2323,55 @@ class HDFSHookTest(unittest.TestCase):
 
 
 try:
+    from airflow.hooks.http_hook import HttpHook
+except ImportError:
+    HttpHook = None
+
+
+@unittest.skipIf(HttpHook is None,
+                 "Skipping test because HttpHook is not installed")
+class HttpHookTest(unittest.TestCase):
+    def setUp(self):
+        configuration.load_test_config()
+
+    @mock.patch('airflow.hooks.http_hook.HttpHook.get_connection')
+    def test_http_connection(self, mock_get_connection):
+        c = models.Connection(conn_id='http_default', conn_type='http',
+                              host='localhost', schema='http')
+        mock_get_connection.return_value = c
+        hook = HttpHook()
+        hook.get_conn({})
+        self.assertEqual(hook.base_url, 'http://localhost')
+
+    @mock.patch('airflow.hooks.http_hook.HttpHook.get_connection')
+    def test_https_connection(self, mock_get_connection):
+        c = models.Connection(conn_id='http_default', conn_type='http',
+                              host='localhost', schema='https')
+        mock_get_connection.return_value = c
+        hook = HttpHook()
+        hook.get_conn({})
+        self.assertEqual(hook.base_url, 'https://localhost')
+
+    @mock.patch('airflow.hooks.http_hook.HttpHook.get_connection')
+    def test_host_encoded_http_connection(self, mock_get_connection):
+        c = models.Connection(conn_id='http_default', conn_type='http',
+                              host='http://localhost')
+        mock_get_connection.return_value = c
+        hook = HttpHook()
+        hook.get_conn({})
+        self.assertEqual(hook.base_url, 'http://localhost')
+
+    @mock.patch('airflow.hooks.http_hook.HttpHook.get_connection')
+    def test_host_encoded_https_connection(self, mock_get_connection):
+        c = models.Connection(conn_id='http_default', conn_type='http',
+                              host='https://localhost')
+        mock_get_connection.return_value = c
+        hook = HttpHook()
+        hook.get_conn({})
+        self.assertEqual(hook.base_url, 'https://localhost')
+
+
+try:
     from airflow.hooks.S3_hook import S3Hook
 except ImportError:
     S3Hook = None
@@ -2268,58 +2389,6 @@ class S3HookTest(unittest.TestCase):
         self.assertEqual(parsed,
                          ("test", "this/is/not/a-real-key.txt"),
                          "Incorrect parsing of the s3 url")
-
-
-HELLO_SERVER_CMD = """
-import socket, sys
-listener = socket.socket()
-listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-listener.bind(('localhost', 2134))
-listener.listen(1)
-sys.stdout.write('ready')
-sys.stdout.flush()
-conn = listener.accept()[0]
-conn.sendall(b'hello')
-"""
-
-
-class SSHHookTest(unittest.TestCase):
-    def setUp(self):
-        configuration.load_test_config()
-        from airflow.contrib.hooks.ssh_hook import SSHHook
-        self.hook = SSHHook()
-        self.hook.no_host_key_check = True
-
-    def test_remote_cmd(self):
-        output = self.hook.check_output(["echo", "-n", "airflow"])
-        self.assertEqual(output, b"airflow")
-
-    def test_tunnel(self):
-        print("Setting up remote listener")
-        import subprocess
-        import socket
-
-        self.handle = self.hook.Popen([
-            "python", "-c", '"{0}"'.format(HELLO_SERVER_CMD)
-        ], stdout=subprocess.PIPE)
-
-        print("Setting up tunnel")
-        with self.hook.tunnel(2135, 2134):
-            print("Tunnel up")
-            server_output = self.handle.stdout.read(5)
-            self.assertEqual(server_output, b"ready")
-            print("Connecting to server via tunnel")
-            s = socket.socket()
-            s.connect(("localhost", 2135))
-            print("Receiving...", )
-            response = s.recv(5)
-            self.assertEqual(response, b"hello")
-            print("Closing connection")
-            s.close()
-            print("Waiting for listener...")
-            output, _ = self.handle.communicate()
-            self.assertEqual(self.handle.returncode, 0)
-            print("Closing tunnel")
 
 
 send_email_test = mock.Mock()
